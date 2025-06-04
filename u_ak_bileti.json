@@ -1,0 +1,424 @@
+{
+  "name": "uçak bileti",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://test.api.amadeus.com/v1/security/oauth2/token",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "name": "client_id",
+              "value": "OehBooNfwKFDmKmtcv75iTG6SNVioUDV"
+            },
+            {
+              "name": "client_secret",
+              "value": "ycIFRvkYp62xklmt"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "59776f8b-e94b-41a4-be57-ca23ef0e3ab5",
+      "name": "Access Token Al",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -840,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Giriş item'larını al\nconst items = $input.all();\nconst processedFlights = [];\nlet enUcuzUcus = null;\n\nconsole.log(\"[Node: Uçuş Verilerini İşle] >> Başlangıç: Gelen toplam item sayısı:\", items.length);\n\n// 2. Her bir item üzerinde dön\nfor (const item of items) {\n  console.log(\"[Node: Uçuş Verilerini İşle] >> İşlenen item'ın yapısı (döngü başı):\", JSON.stringify(item, null, 2));\n\n  // 3. item.json.data'nın var olup olmadığını ve string olup olmadığını kontrol et\n  // Girdi verinize göre, API yanıtı item.json.data içinde bir string olarak geliyor.\n  const jsonString = item.json && item.json.data;\n\n  if (jsonString && typeof jsonString === 'string') {\n    console.log(\"[Node: Uçuş Verilerini İşle] >> item.json.data bir string ve dolu, parse ediliyor...\");\n    try {\n      // 4. JSON string'ini JavaScript objesine çevir\n      const apiResponse = JSON.parse(jsonString);\n      console.log(\"[Node: Uçuş Verilerini İşle] >> API Yanıtı (Parse Edilmiş):\", JSON.stringify(apiResponse, null, 2));\n\n      // 5. Asıl uçuş teklifleri dizisini al (apiResponse.data)\n      const flightOffers = apiResponse.data;\n      console.log(\"[Node: Uçuş Verilerini İşle] >> flightOffers Değişkeni (Parse Sonrası):\", flightOffers === undefined ? \"undefined\" : flightOffers === null ? \"null\" : JSON.stringify(flightOffers, null, 2).slice(0, 500) + \"...\"); // Çok uzunsa kısalt\n      console.log(\"[Node: Uçuş Verilerini İşle] >> flightOffers Türü:\", typeof flightOffers, \" | Dizi mi?:\", Array.isArray(flightOffers));\n      console.log(\"[Node: Uçuş Verilerini İşle] >> flightOffers Uzunluğu:\", flightOffers ? flightOffers.length : 'Tanımsız veya null');\n\n      if (flightOffers && Array.isArray(flightOffers) && flightOffers.length > 0) {\n        console.log(\"[Node: Uçuş Verilerini İşle] >> flightOffers koşulu sağlandı, iç döngüye giriliyor. Teklif sayısı:\", flightOffers.length);\n\n        // 6. Her bir uçuş teklifi (offer) üzerinde dön\n        for (const offer of flightOffers) {\n          console.log(\"[Node: Uçuş Verilerini İşle] >> --- YENİ TEKLİF İŞLENİYOR (Ham Veri) ---\", JSON.stringify(offer, null, 2));\n\n          let price = null;\n          let currency = null;\n\n          // 7. Fiyat bilgilerini güvenli bir şekilde al\n          if (offer.price && (typeof offer.price.grandTotal !== 'undefined' || typeof offer.price.total !== 'undefined')) {\n            price = parseFloat(offer.price.grandTotal || offer.price.total);\n            currency = offer.price.currency;\n            console.log(\"[Node: Uçuş Verilerini İşle] >> Fiyat ve Para Birimi Alındı:\", price, currency);\n          } else {\n            console.warn(\"[Node: Uçuş Verilerini İşle] >> Uyarı: Bu teklifte geçerli fiyat (.price.grandTotal veya .price.total) bilgisi bulunamadı. Atlanıyor.\", offer.price ? JSON.stringify(offer.price, null, 2) : \"offer.price tanımsız\");\n            continue; \n          }\n\n          if (isNaN(price) || price === null) {\n            console.warn(\"[Node: Uçuş Verilerini İşle] >> Uyarı: Geçersiz fiyat değeri (NaN veya null). Atlanıyor.\", price);\n            continue;\n          }\n\n          // 8. Havayolu bilgisini güvenli bir şekilde al\n          const airline = (offer.validatingAirlineCodes && offer.validatingAirlineCodes.length > 0) ? offer.validatingAirlineCodes[0] : \"N/A\";\n          console.log(\"[Node: Uçuş Verilerini İşle] >> Havayolu Alındı:\", airline);\n\n          // 9. Güzergah ve segment bilgilerini güvenli bir şekilde al\n          let departure, arrival, ucusTarihi;\n          if (offer.itineraries && Array.isArray(offer.itineraries) && offer.itineraries.length > 0 &&\n              offer.itineraries[0].segments && Array.isArray(offer.itineraries[0].segments) && offer.itineraries[0].segments.length > 0) {\n            const itinerary = offer.itineraries[0];\n            const firstSegment = itinerary.segments[0];\n            const lastSegment = itinerary.segments[itinerary.segments.length - 1];\n\n            if (firstSegment.departure && lastSegment.arrival &&\n                firstSegment.departure.iataCode && firstSegment.departure.at &&\n                lastSegment.arrival.iataCode && lastSegment.arrival.at) {\n              departure = firstSegment.departure;\n              arrival = lastSegment.arrival;\n              ucusTarihi = departure.at.slice(0, 10); \n              console.log(\"[Node: Uçuş Verilerini İşle] >> Kalkış, Varış, Uçuş Tarihi Alındı:\", JSON.stringify(departure, null, 2), JSON.stringify(arrival, null, 2), ucusTarihi);\n            } else {\n              console.warn(\"[Node: Uçuş Verilerini İşle] >> Uyarı: İlk veya son segmentte kalkış/varış detayları (iataCode, at) eksik. Atlanıyor.\", JSON.stringify(itinerary.segments, null, 2));\n              continue;\n            }\n          } else {\n            console.warn(\"[Node: Uçuş Verilerini İşle] >> Uyarı: Bu teklifte geçerli güzergah/segment bilgisi bulunamadı (itineraries veya segments dizisi eksik/boş). Atlanıyor.\", offer.itineraries ? JSON.stringify(offer.itineraries, null, 2) : \"offer.itineraries tanımsız\");\n            continue;\n          }\n\n          // 10. İşlenmiş uçuş objesini oluştur\n          const currentFlight = {\n            fiyat: price,\n            para_birimi: currency,\n            havayolu: airline,\n            kalkis_havaalani: departure.iataCode,\n            varis_havaalani: arrival.iataCode,\n            kalkis_saati_utc: departure.at,\n            varis_saati_utc: arrival.at,\n            ucus_tarihi: ucusTarihi,\n            eklenme_timestamp_utc: new Date().toISOString()\n          };\n          processedFlights.push(currentFlight);\n          console.log(\"[Node: Uçuş Verilerini İşle] >> İşlenmiş Uçuş Eklendi:\", JSON.stringify(currentFlight, null, 2));\n\n          // 11. En ucuz uçuşu takip et\n          if (enUcuzUcus === null || currentFlight.fiyat < enUcuzUcus.fiyat) {\n            enUcuzUcus = currentFlight;\n            console.log(\"[Node: Uçuş Verilerini İşle] >> Yeni En Ucuz Uçuş Bulundu:\", JSON.stringify(enUcuzUcus, null, 2));\n          }\n        } \n      } else {\n        console.log(\"[Node: Uçuş Verilerini İşle] >> API yanıtında 'data' dizisi (flightOffers) bulunamadı, dizi değil veya boş.\");\n      }\n    } catch (e) {\n      console.error(\"[Node: Uçuş Verilerini İşle] >> JSON parse edilirken veya işlenirken bir hata oluştu:\", e.message, e.stack);\n      console.error(\"[Node: Uçuş Verilerini İşle] >> Hatalı veri (jsonString):\", jsonString ? jsonString.slice(0, 500) + \"...\" : \"jsonString tanımsız\");\n    }\n  } else {\n    console.warn(\"[Node: Uçuş Verilerini İşle] >> Gelen item'da 'item.json.data' alanı bulunamadı, string değil veya boş.\", item.json ? JSON.stringify(item.json, null, 2) : \"item.json tanımsız\");\n  }\n} \n\nconsole.log(\"[Node: Uçuş Verilerini İşle] >> Tüm İşlenmiş Uçuşlar Dizisi (Son Hali):\", JSON.stringify(processedFlights, null, 2));\nconsole.log(\"[Node: Uçuş Verilerini İşle] >> Son En Ucuz Uçuş Detayı (Son Hali):\", JSON.stringify(enUcuzUcus, null, 2));\n\n// 12. Hedef fiyat ve sonucu döndür\nconst hedefFiyat = 200; \n\nreturn {\n  json: { \n    tum_islenmis_ucuslar: processedFlights,\n    en_ucuz_ucus_detayi: enUcuzUcus,\n    hedef_kriter_fiyati: hedefFiyat,\n    fiyat_hedefe_uygun_mu: enUcuzUcus ? enUcuzUcus.fiyat <= hedefFiyat : false,\n    bulunan_teklif_sayisi: processedFlights.length\n  }\n};"
+      },
+      "id": "6b18d2ae-a8c9-45e6-be27-63de706dc84e",
+      "name": "Uçuş Verilerini İşle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{$json.fiyat_uygun_mu}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "id": "22459955-b9fa-454d-921f-dcf0059b5056",
+              "leftValue": "={{$json.json.en_ucuz_ucus_detayi.fiyat}} < 300",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a8be5e7e-f108-4557-8709-0cd2e539ac2f",
+      "name": "Fiyat Kontrolü",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send"
+      },
+      "id": "ab43b354-539d-4427-ba10-136436741d45",
+      "name": "Telegram Bildirimi Gönder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "a1860966-37e4-4dff-856b-9ed25737a622",
+      "credentials": {
+        "telegramApi": {
+          "id": "XApzLlUaHyodnJl9",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "yetisharun@gmail.com",
+        "subject": "🎉 Ucuz Uçak Bileti Bulundu!",
+        "message": "Merhaba,\nBugünkü {{$json.json.en_ucuz_ucus_detayi.kalkis_havaalani}} - {{$json.json.en_ucuz_ucus_detayi.varis_havaalani}} rotası için\nhedef fiyatınızın ({ {$json.json.hedef_kriter_fiyati} } { {$json.json.en_ucuz_ucus_detayi.para_birimi || 'EUR'} }) altında bir uçuş bulunamadı.\nBulunan en ucuz uçuş: {{$json.json.en_ucuz_ucus_detayi.fiyat}} {{$json.json.en_ucuz_ucus_detayi.para_birimi || 'EUR'}}\nToplam { {$json.json.bulunan_teklif_sayisi} } uçuş teklifi incelendi.",
+        "options": {}
+      },
+      "id": "f79a4ecc-c718-4cb2-92e0-dc78f27376c3",
+      "name": "Email Bildirimi Gönder",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "ad2fca8e-e3b3-4dca-bc84-3103dbf931e2",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IRup49QplNclpsxp",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Uçak bileti otomasyonu\n**Double click** to edit me. [Guide](https://docs.n8n.io/workflows/sticky-notes/)"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1160,
+        -440
+      ],
+      "typeVersion": 1,
+      "id": "b9c2b13d-03e3-452d-a3cc-7775b5cf4322",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "tableId": "ucak_bileti_fiyatlari",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "kalkis_sehri",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.kalkis_havaalani}}"
+            },
+            {
+              "fieldId": "varis_sehri",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.varis_havaalani}}"
+            },
+            {
+              "fieldId": "ucus_tarihi",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.ucus_tarihi}}"
+            },
+            {
+              "fieldId": "fiyat",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.fiyat}}"
+            },
+            {
+              "fieldId": "para_birimi",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.para_birimi}}"
+            },
+            {
+              "fieldId": "havayolu",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.havayolu}}"
+            },
+            {
+              "fieldId": "kalkis_saati_utc",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.kalkis_saati_utc}}"
+            },
+            {
+              "fieldId": "varis_saati_utc",
+              "fieldValue": "={{$json.en_ucuz_ucus_detayi.varis_saati_utc}}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        340
+      ],
+      "id": "0724bcd7-4c12-442c-bd69-c569ddf6c596",
+      "name": "Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0XgxSG23cxPsJO3R",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "7c07c7d7-f603-4083-a089-bc6316aa9577",
+      "name": "Her 2 Saatte Bir Çalıştır",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1060,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://test.api.amadeus.com/v2/shopping/flight-offers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "originLocationCode",
+              "value": "IST"
+            },
+            {
+              "name": "destinationLocationCode",
+              "value": "DBV"
+            },
+            {
+              "name": "departureDate",
+              "value": "2025-06-15"
+            },
+            {
+              "name": "adults",
+              "value": "2"
+            },
+            {
+              "name": "max",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$node[\"Access Token Al\"].json.access_token}}"
+            },
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "fe0a1019-40f9-4488-9f5e-646179d7ae56",
+      "name": "Uçak Bileti Ara",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://test.api.amadeus.com/v2/shopping/flight-offers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "originLocationCode",
+              "value": "IST"
+            },
+            {
+              "name": "destinationLocationCode",
+              "value": "TGD"
+            },
+            {
+              "name": "departureDate",
+              "value": "2025-07-20"
+            },
+            {
+              "name": "max",
+              "value": "10"
+            },
+            {
+              "name": "adults",
+              "value": "2"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$node[\"Access Token Al\"].json.access_token}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -600,
+        -320
+      ],
+      "id": "bf96fe4f-34cc-4bb2-b81a-2097a3b79761",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {
+    "Her 2 Saatte Bir Çalıştır": [
+      {
+        "json": {
+          "timestamp": "2025-06-04T13:33:29.642-04:00",
+          "Readable date": "June 4th 2025, 1:33:29 pm",
+          "Readable time": "1:33:29 pm",
+          "Day of week": "Wednesday",
+          "Year": "2025",
+          "Month": "June",
+          "Day of month": "04",
+          "Hour": "13",
+          "Minute": "33",
+          "Second": "29",
+          "Timezone": "Europe/Istanbul (UTC+03:00)"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Access Token Al": {
+      "main": [
+        [
+          {
+            "node": "Uçak Bileti Ara",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uçuş Verilerini İşle": {
+      "main": [
+        [
+          {
+            "node": "Fiyat Kontrolü",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fiyat Kontrolü": {
+      "main": [
+        [
+          {
+            "node": "Telegram Bildirimi Gönder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Bildirimi Gönder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Her 2 Saatte Bir Çalıştır": {
+      "main": [
+        [
+          {
+            "node": "Access Token Al",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uçak Bileti Ara": {
+      "main": [
+        [
+          {
+            "node": "Uçuş Verilerini İşle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "fe72c1f2-d265-4e2c-b84c-9ff90a0f7bbe",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "63b2d2c2380f022031d1bd000bd07e8495998a79c82105db326bf7a1b52fc23c"
+  },
+  "id": "6whS4QPNsW4dIYmP",
+  "tags": []
+}
